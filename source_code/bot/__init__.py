@@ -1,0 +1,1 @@
+"""Paket bot trading XAUUSD."""
