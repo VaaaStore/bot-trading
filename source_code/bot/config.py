@@ -25,10 +25,17 @@ class Config:
     server: str
     symbol: str
     lot_size: float
-    max_spread: Optional[float]  # dalam poin, sama seperti kolom Spread di MT5
+    max_spread: Optional[float]
     max_consecutive_loss: int
     trailing_mode: str
     mt5_path: Optional[str]
+    atr_mult: float
+    adx_min: float
+    ema_fast: int
+    ema_slow: int
+    rsi_period: int
+    max_daily_loss_percent: Optional[float]
+    max_drawdown_percent: Optional[float]
 
 
 def _get(name: str) -> Optional[str]:
@@ -103,6 +110,77 @@ def load_config() -> Config:
     trailing_mode = (_get("TRAILING_MODE") or "step").lower()
     if trailing_mode not in TRAILING_MODES:
         problems.append(f"TRAILING_MODE harus salah satu dari: {', '.join(TRAILING_MODES)}")
+    # --- Parameter strategi & risiko (default kandidat: ATR 4, ADX 30) ---
+    atr_mult = 4.0
+    atr_raw = _get("ATR_MULT")
+    if atr_raw:
+        try:
+            atr_mult = float(atr_raw)
+            if atr_mult <= 0:
+                problems.append("ATR_MULT harus lebih dari 0")
+        except ValueError:
+            problems.append("ATR_MULT harus berupa angka")
+
+    adx_min = 30.0
+    adx_raw = _get("ADX_MIN")
+    if adx_raw:
+        try:
+            adx_min = float(adx_raw)
+            if adx_min < 0:
+                problems.append("ADX_MIN minimal 0")
+        except ValueError:
+            problems.append("ADX_MIN harus berupa angka")
+
+    ema_fast = 20
+    ef_raw = _get("EMA_FAST")
+    if ef_raw:
+        try:
+            ema_fast = int(ef_raw)
+            if ema_fast < 1:
+                problems.append("EMA_FAST minimal 1")
+        except ValueError:
+            problems.append("EMA_FAST harus berupa bilangan bulat")
+
+    ema_slow = 50
+    es_raw = _get("EMA_SLOW")
+    if es_raw:
+        try:
+            ema_slow = int(es_raw)
+            if ema_slow < 1:
+                problems.append("EMA_SLOW minimal 1")
+        except ValueError:
+            problems.append("EMA_SLOW harus berupa bilangan bulat")
+
+    rsi_period = 10
+    rsi_raw = _get("RSI_PERIOD")
+    if rsi_raw:
+        try:
+            rsi_period = int(rsi_raw)
+            if rsi_period < 1:
+                problems.append("RSI_PERIOD minimal 1")
+        except ValueError:
+            problems.append("RSI_PERIOD harus berupa bilangan bulat")
+
+    max_daily_loss_percent: Optional[float] = None
+    mdl_raw = _get("MAX_DAILY_LOSS_PERCENT")
+    if mdl_raw:
+        try:
+            max_daily_loss_percent = float(mdl_raw)
+            if max_daily_loss_percent <= 0:
+                problems.append("MAX_DAILY_LOSS_PERCENT harus lebih dari 0")
+        except ValueError:
+            problems.append("MAX_DAILY_LOSS_PERCENT harus berupa angka")
+
+    max_drawdown_percent: Optional[float] = None
+    mdd_raw = _get("MAX_DRAWDOWN_PERCENT")
+    if mdd_raw:
+        try:
+            max_drawdown_percent = float(mdd_raw)
+            if max_drawdown_percent <= 0:
+                problems.append("MAX_DRAWDOWN_PERCENT harus lebih dari 0")
+        except ValueError:
+            problems.append("MAX_DRAWDOWN_PERCENT harus berupa angka")
+
 
     if problems:
         raise ConfigError("Isi .env belum benar:\n  - " + "\n  - ".join(problems))
@@ -117,4 +195,11 @@ def load_config() -> Config:
         max_consecutive_loss=max_loss,
         trailing_mode=trailing_mode,
         mt5_path=_get("MT5_PATH"),
+        atr_mult=atr_mult,
+        adx_min=adx_min,
+        ema_fast=ema_fast,
+        ema_slow=ema_slow,
+        rsi_period=rsi_period,
+        max_daily_loss_percent=max_daily_loss_percent,
+        max_drawdown_percent=max_drawdown_percent,
     )

@@ -2,7 +2,7 @@
 state.py - Pengelolaan persis state volatil ke data/state.json secara atomik.
 """
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -35,10 +35,22 @@ def load_state(file_path: Path = STATE_PATH) -> BotState:
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        return BotState(**data)
+        if not isinstance(data, dict):
+            return BotState()
+        
+        # Ambil field yang valid saja di BotState untuk mengabaikan kunci tak dikenal
+        valid_keys = {f.name for f in dataclasses_fields(BotState)} if hasattr(BotState, "__dataclass_fields__") else set(BotState.__annotations__.keys())
+        filtered_data = {k: v for k, v in data.items() if k in valid_keys}
+        return BotState(**filtered_data)
     except Exception:
         # Tahan terhadap file rusak: buat backup dan kembalikan state bersih
         backup_path = file_path.with_suffix(".bak")
         if file_path.exists():
             file_path.replace(backup_path)
         return BotState()
+
+
+def dataclasses_fields(cls):
+    import dataclasses
+    return dataclasses.fields(cls)
+

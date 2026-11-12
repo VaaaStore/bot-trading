@@ -25,6 +25,9 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
+from bot.risk import LossLock
+from bot.trailing import calculate_trailing_stop
+
 
 @dataclass
 class BacktestConfig:
@@ -80,12 +83,10 @@ def run_backtest(df: pd.DataFrame, cfg: BacktestConfig) -> BacktestResult:
     sig = df["signal"].fillna(0).to_numpy(dtype=int)
     sld = df["sl_distance"].to_numpy(dtype=float)
 
-    lock_gap = cfg.first_trigger_r - 1.0
+    lock = LossLock(max_consecutive_loss=cfg.max_consecutive_loss)
     trades = []
     pos = None
-    consec = 0
-    locked_day = None
-    locked_days = 0
+    recorded_locked_days = set()
     skipped_busy = skipped_spread = skipped_locked = skipped_hours = 0
 
     def close_trade(i: int, exit_price: float, label: str) -> None:
@@ -115,13 +116,15 @@ def run_backtest(df: pd.DataFrame, cfg: BacktestConfig) -> BacktestResult:
         pos = None
 
     for i in range(n):
+        current_date = days[i]
+
         # ---- 1. entry di pembukaan candle ini, berdasarkan sinyal candle sebelumnya
         s = int(sig[i - 1]) if i > 0 else 0
         if s != 0:
             r = sld[i - 1]
             if pos is not None:
                 skipped_busy += 1
-            elif locked_day is not None and days[i] == locked_day:
+            elif lock.is_locked(current_date):
                 skipped_locked += 1
             elif not in_trading_hours(int(hours[i]), cfg.hour_start, cfg.hour_end):
                 skipped_hours += 1
@@ -154,21 +157,23 @@ def run_backtest(df: pd.DataFrame, cfg: BacktestConfig) -> BacktestResult:
                 level = pos["level"]
                 label = "SL rugi" if level == 0 else f"SL profit{level}"
                 close_trade(i, exit_price, label)
-                if level == 0:
-                    consec += 1
-                    if consec >= cfg.max_consecutive_loss:
-                        locked_day = days[i]
-                        locked_days += 1
-                        consec = 0
-                else:
-                    consec = 0
+                is_loss_sl = (level == 0)
+                is_now_locked = lock.record_trade_result(is_loss_sl, current_date)
+                if is_now_locked:
+                    recorded_locked_days.add(current_date)
             else:
                 pos["mfe"] = max(pos["mfe"], fav_profit_r)
-                if fav_profit_r >= cfg.first_trigger_r:
-                    new_level = int(math.floor(fav_profit_r - lock_gap + 1e-9))
-                    if new_level > pos["level"]:
-                        pos["level"] = new_level
-                        pos["sl"] = entry + side * new_level * r
+                new_level, new_sl = calculate_trailing_stop(
+                    side=side,
+                    entry=entry,
+                    r=r,
+                    fav_profit_r=fav_profit_r,
+                    current_level=pos["level"],
+                    current_sl=pos["sl"],
+                    first_trigger_r=cfg.first_trigger_r,
+                )
+                pos["level"] = new_level
+                pos["sl"] = new_sl
 
     # posisi yang masih terbuka di akhir data ditutup di harga terakhir
     if pos is not None:
@@ -182,6 +187,6 @@ def run_backtest(df: pd.DataFrame, cfg: BacktestConfig) -> BacktestResult:
         skipped_busy=skipped_busy,
         skipped_spread=skipped_spread,
         skipped_locked=skipped_locked,
-        locked_days=locked_days,
+        locked_days=len(recorded_locked_days),
         skipped_hours=skipped_hours,
     )

@@ -35,6 +35,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Tarik data M1 dari MT5")
     ap.add_argument("--bars", type=int, default=100000, help="jumlah candle yang diminta")
     ap.add_argument("--symbol", default=None, help="timpa SYMBOL di .env")
+    ap.add_argument("--force", action="store_true", help="paksa timpa meskipun file lama memiliki candle lebih banyak")
     args = ap.parse_args()
 
     try:
@@ -44,6 +45,26 @@ def main() -> int:
         return 1
     if args.symbol:
         cfg = dataclasses.replace(cfg, symbol=args.symbol)
+
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", cfg.symbol)
+    out_dir = BASE_DIR / "data" / "raw"
+    csv_path = out_dir / f"{safe}_M1.csv"
+    meta_path = csv_path.with_suffix(".json")
+
+    # Pengecekan file lama agar tidak menimpa jika candle lama lebih banyak, kecuali --force
+    if csv_path.exists() and meta_path.exists() and not args.force:
+        try:
+            old_meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            old_bars = old_meta.get("bars", 0)
+            if old_bars > args.bars:
+                console.print(
+                    f"[yellow]Dibatalkan: File {csv_path.name} lama memiliki {old_bars:,} candle, "
+                    f"lebih banyak dari {args.bars:,} candle yang diminta.\n"
+                    f"Gunakan flag --force jika ingin memaksa menimpa.[/yellow]"
+                )
+                return 0
+        except Exception:
+            pass
 
     client = MT5Client(cfg)
     try:

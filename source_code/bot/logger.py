@@ -35,10 +35,14 @@ def log_trade_csv(trade_data: dict) -> None:
     file_exists = TRADES_CSV.exists()
     headers = [
         "entry_time", "exit_time", "side", "entry_price", "exit_price",
-        "label", "level", "pnl_r", "pnl_usd", "spread_points"
+        "label", "level", "pnl_r", "pnl_usd", "spread_points", "slippage"
     ]
     with open(TRADES_CSV, "a", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=headers, extrasaction="ignore")
         if not file_exists:
             writer.writeheader()
+        # Pastikan kolom slippage ada
+        if "slippage" not in trade_data:
+            trade_data["slippage"] = 0.0
         writer.writerow(trade_data)
+

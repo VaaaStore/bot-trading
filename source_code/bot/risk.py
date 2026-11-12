@@ -1,5 +1,5 @@
 """
-risk.py - Kelas dan fungsi murni pengunci kerugian (LossLock) dan filter risiko.
+risk.py - Kelas dan fungsi murni pengunci kerugian (LossLock) dan filter risiko/jam.
 """
 from dataclasses import dataclass
 from datetime import date
@@ -58,3 +58,20 @@ class LossLock:
         """Mengaktifkan override manual pengguna (reset ke 0 jatah)."""
         self.state.consecutive_losses = 0
         self.state.override_active = True
+
+
+def in_trading_hours(hour: int, start: Optional[int], end: Optional[int]) -> bool:
+    """True kalau jam server berada di jendela [start, end). Jendela boleh melewati tengah malam."""
+    if start is None or end is None:
+        return True
+    if start <= end:
+        return start <= hour < end
+    return hour >= start or hour < end
+
+
+def check_spread_filter(spread_points: float, max_spread: Optional[float]) -> bool:
+    """True kalau spread di bawah atau sama dengan max_spread (atau max_spread mati/None)."""
+    if max_spread is None:
+        return True
+    return spread_points <= max_spread
+
