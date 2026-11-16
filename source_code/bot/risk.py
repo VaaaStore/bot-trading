@@ -75,3 +75,30 @@ def check_spread_filter(spread_points: float, max_spread: Optional[float]) -> bo
         return True
     return spread_points <= max_spread
 
+
+def check_daily_loss(daily_loss_usd: float, balance: float,
+                     max_daily_loss_percent: Optional[float]) -> bool:
+    """
+    True kalau kerugian harian masih di bawah batas (boleh entry baru).
+    daily_loss_usd: total rugi hari ini dalam USD (angka positif = rugi).
+    balance: saldo akun dalam USD.
+    max_daily_loss_percent: batas dalam persen (mis. 5.0 = 5%). None = tidak aktif.
+    """
+    if max_daily_loss_percent is None or balance <= 0:
+        return True
+    return daily_loss_usd < balance * max_daily_loss_percent / 100.0
+
+
+def check_drawdown(peak_equity: float, current_equity: float,
+                   max_drawdown_percent: Optional[float]) -> bool:
+    """
+    True kalau drawdown dari puncak equity masih di bawah batas (boleh entry baru).
+    peak_equity: equity tertinggi sejak bot mulai.
+    current_equity: equity saat ini.
+    max_drawdown_percent: batas dalam persen (mis. 20.0 = 20%). None = tidak aktif.
+    """
+    if max_drawdown_percent is None or peak_equity <= 0:
+        return True
+    drawdown_pct = (peak_equity - current_equity) / peak_equity * 100.0
+    return drawdown_pct < max_drawdown_percent
+

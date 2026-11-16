@@ -32,6 +32,8 @@ data/state.json
 data/*.tmp
 data/*.bak
 data/backtest_trades.csv
+data/trades_uji4.csv
+data/*cadangan*
 
 # -----------------------------------------------------------------------------
 # Data Mentah Backtest Berukuran Besar (Opsional di-ignore agar repo ringan)

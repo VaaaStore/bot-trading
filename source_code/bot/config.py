@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 ENV_PATH = BASE_DIR / ".env"
 
-TRAILING_MODES = ("step", "continuous", "atr")
+TRAILING_MODES = ("step",)
 
 
 class ConfigError(Exception):
@@ -36,6 +36,8 @@ class Config:
     rsi_period: int
     max_daily_loss_percent: Optional[float]
     max_drawdown_percent: Optional[float]
+    mode: str = "signal_only"          # signal_only | demo_orders
+    allow_real: bool = False           # izin eksplisit akun REAL (default mati)
 
 
 def _get(name: str) -> Optional[str]:
@@ -109,7 +111,10 @@ def load_config() -> Config:
 
     trailing_mode = (_get("TRAILING_MODE") or "step").lower()
     if trailing_mode not in TRAILING_MODES:
-        problems.append(f"TRAILING_MODE harus salah satu dari: {', '.join(TRAILING_MODES)}")
+        problems.append(
+            f"TRAILING_MODE harus 'step' (satu-satunya mode yang diimplementasikan). "
+            f"Nilai '{trailing_mode}' tidak dikenal."
+        )
     # --- Parameter strategi & risiko (default kandidat: ATR 4, ADX 30) ---
     atr_mult = 4.0
     atr_raw = _get("ATR_MULT")
@@ -181,6 +186,14 @@ def load_config() -> Config:
         except ValueError:
             problems.append("MAX_DRAWDOWN_PERCENT harus berupa angka")
 
+    # --- mode & keamanan ---
+    valid_modes = ("signal_only", "demo_orders")
+    mode = (_get("MODE") or "signal_only").lower()
+    if mode not in valid_modes:
+        problems.append(f"MODE harus salah satu dari: {', '.join(valid_modes)}")
+
+    allow_real_raw = (_get("ALLOW_REAL") or "false").lower()
+    allow_real = allow_real_raw in ("1", "true", "yes")
 
     if problems:
         raise ConfigError("Isi .env belum benar:\n  - " + "\n  - ".join(problems))
@@ -202,4 +215,6 @@ def load_config() -> Config:
         rsi_period=rsi_period,
         max_daily_loss_percent=max_daily_loss_percent,
         max_drawdown_percent=max_drawdown_percent,
+        mode=mode,
+        allow_real=allow_real,
     )

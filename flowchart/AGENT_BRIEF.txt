@@ -1,0 +1,482 @@
+=====================================================================================
+AGENT_BRIEF.txt  -  BRIEF PROYEK "BOT TRADING XAUUSD (PYTHON + MT5)"
+Untuk: agent AI di VS Code.  Bahasa kerja dengan pengguna: Indonesia.
+=====================================================================================
+
+0. CARA MEMAKAI FILE INI (BACA DULU)
+-------------------------------------------------------------------------------------
+Tugasmu: melanjutkan proyek ini dari status saat ini (bagian 4) sampai SELESAI (bagian 12),
+mengikuti rencana tahap (bagian 10), keputusan pengguna (bagian 3), dan aturan kerja
+(bagian 6-9). Kerjakan sendiri selama tidak terblokir. Berhenti dan tanya pengguna hanya
+untuk hal yang tercantum di bagian 6.5.
+
+Prinsip utama, selalu berlaku:
+  (a) JANGAN PERNAH menganggap sesuatu berhasil tanpa bukti (tes lulus, output dibaca, log dicek).
+  (b) SETIAP KEGAGALAN diselidiki sampai ketemu akar masalah, diperbaiki, lalu diuji ulang.
+  (c) Ambil KEPUTUSAN TERBAIK sendiri saat ada ambiguitas: pilih opsi paling aman yang
+      sesuai keputusan pengguna, catat alasannya di DECISIONS.md, lalu lanjut.
+  (d) JUJUR pada hasil. Proyek ini diikutkan lomba; hasil nyata yang jujur lebih bernilai
+      daripada klaim profit tanpa bukti.
+
+Saran: salin file ini ke AGENTS.md atau CLAUDE.md di akar proyek supaya terbaca otomatis.
+
+
+1. TUJUAN DAN KONTEKS
+-------------------------------------------------------------------------------------
+- Bot trading otomatis untuk XAUUSD (emas) di MetaTrader 5, ditulis dengan Python, berjalan
+  di laptop Windows 11 milik pengguna (Raditya).
+- Proyek ini dipersiapkan untuk lomba innovation program, kategori finance. Penilaian
+  biasanya mencakup: bukti terukur (backtest + forward test), manajemen risiko, kualitas
+  kode dan tes, dokumentasi, kejujuran soal keterbatasan, dan demo yang berjalan.
+- Bot memantau pasar, mencari sinyal dari gabungan indikator (konfirmasi berlapis), masuk
+  posisi (buy/sell) di harga saat ini, mengelola SL bertingkat tanpa take profit tetap,
+  berhenti otomatis setelah 3 SL(rugi) berturut-turut, dan mengirim alert ke Gmail.
+- AI (lewat 9router) hanya dipakai untuk MEMBERI INFORMASI berita hari ini. AI TIDAK
+  PERNAH mengambil keputusan entry/exit.
+- Tidak ada jaminan profit. Semua dokumen dan pesan harus mencantumkan bahwa ini bukan
+  nasihat investasi.
+
+
+2. LINGKUNGAN
+-------------------------------------------------------------------------------------
+- OS: Windows 11 (Home). Editor: VS Code, terminal PowerShell.
+- Folder kerja: C:\Users\acer\Documents\bot-trade\source_code  (workspace VS Code = bot-trade)
+- Python: 3.14.7 di lingkungan ..\.venv (relatif dari source_code). Paket: MetaTrader5 5.0.6231,
+  pandas 3.1.1, numpy 2.5.4, python-dotenv, rich 15, pytest 9.
+  Lingkungan lain (.venv-1, source_code\venv) adalah sisa percobaan dan boleh diabaikan.
+- Jalankan semua perintah DARI folder source_code dengan:  ..\.venv\Scripts\python.exe ...
+  Contoh tes:  ..\.venv\Scripts\python.exe -m pytest
+- Broker: Valetax, akun DEMO MT5, tipe HEDGING, leverage 1:100, server "ValetaxIntl-Live2".
+  Simbol: XAUUSD.vx (utama, kontrak 100 per lot, 1 poin = 0.01, lot min 0.01, step 0.01,
+  spread tipikal sekitar 31-33 poin = 0,31-0,33 USD, jarak SL minimum broker sekitar 31 poin)
+  dan BTCUSD.vx (hanya untuk menguji mekanisme di akhir pekan; spread sekitar 2976 poin
+  = 29,76 USD, kontrak 1 per lot).
+- Waktu server MT5 = sekitar UTC+2 (musim ini), WIB = UTC+7, jadi server = WIB - 5 jam.
+  Offset server bisa bergeser 1 jam mengikuti musim: jangan di-hardcode tanpa pengecekan.
+- Smart App Control Windows sudah dimatikan pengguna karena memblokir DLL pandas. JANGAN
+  menyarankan mematikan perlindungan keamanan lain, dan jangan menjalankan VS Code/terminal
+  sebagai Administrator.
+- Library MetaTrader5 hanya jalan di Windows dan butuh terminal MT5 terbuka dan login.
+  Karena itu semua logika murni (indikator, strategi, risiko, trailing, backtest) TIDAK BOLEH
+  meng-import MetaTrader5 supaya tes bisa jalan tanpa MT5 (dan di Linux/CI).
+- Kredensial ada di file .env (tidak boleh dibaca ke log, tidak boleh di-commit).
+  Kunci yang sudah ada: ACCOUNT, PASSWORD, SERVER, SYMBOL, LOT_SIZE, MAX_SPREAD,
+  MAX_CONSECUTIVE_LOSS, TRAILING_MODE, MT5_PATH.
+  Kunci yang direncanakan: GMAIL_USER, GMAIL_APP_PASSWORD, ALERT_TO, AI_BASE_URL
+  (http://localhost:20128/v1), AI_API_KEY, AI_MODEL (prioritas), MODE, ALLOW_REAL, parameter
+  strategi (ATR_MULT, ADX_MIN, dll).
+  Agent TIDAK BOLEH mengubah isi .env milik pengguna. Perbarui .env.example saja.
+
+
+3. KEPUTUSAN PENGGUNA (WAJIB DIPATUHI)
+-------------------------------------------------------------------------------------
+3.1 Instrumen & timeframe: XAUUSD.vx, timeframe M1 (tujuan scalping). M5 hanya boleh untuk
+    riset/backtest, bukan eksekusi, kecuali pengguna menyetujui.
+3.2 Lot tetap (default 0.01), diatur lewat LOT_SIZE di .env. Bukan dihitung dari persen risiko.
+    (Boleh disediakan opsi LOT_MODE=risk_percent, default tetap "fixed".)
+3.3 Hanya SATU posisi terbuka sekali waktu. Tidak boleh full margin, tidak boleh martingale,
+    tidak boleh menggandakan lot, tidak boleh averaging.
+3.4 Tidak ada take profit tetap. Trailing bertingkat dalam satuan R (R = jarak entry ke SL awal):
+      - SL awal = SL(rugi), berjarak 1R.
+      - Saat profit berjalan mencapai 1,5R, SL pindah ke +1R  -> SL(profit1).
+      - Tiap tambahan 1R (2,5R, 3,5R, ...), SL naik jadi +2R, +3R, ...  -> SL(profit2), (profit3)...
+      - SL TIDAK PERNAH mundur. Posisi tutup hanya saat harga menyentuh SL.
+      - Rumus level: n = floor(profit_R - (first_trigger_r - 1)), dengan first_trigger_r = 1,5.
+    Tiap transaksi dicatat label keluarnya: "SL rugi" atau "SL profitN".
+3.5 Penghentian otomatis: setelah 3 kali "SL rugi" BERTURUT-TURUT (kena SL awal, belum pernah
+    digeser), bot berhenti trading. "SL profitN" me-reset hitungan ke 0.
+    - Setelah berhenti, bot lanjut otomatis di hari berikutnya (hitungan di-reset,
+      pergantian hari jam 00.00 WIB).
+    - Jika program dijalankan ulang di hari yang sama saat sedang terkunci: tampilkan alert
+      dan menu: [1] Stop (tetap terkunci)  [2] Tetap lanjut (override). Override wajib
+      konfirmasi mengetik kata LANJUT, direset ke 0 (jatah 3 lagi), dicatat di log, dan dikirim
+      sebagai alert Gmail.
+    - Pengguna menganggap batas rugi harian dan batas drawdown total tidak perlu. Sediakan
+      sebagai OPSI di .env (MAX_DAILY_LOSS_PERCENT, MAX_DRAWDOWN_PERCENT), DEFAULT MATI.
+3.6 Bot berjalan sepenuhnya otomatis tanpa pengawasan HP. Karena itu wajib ada: state yang
+    bertahan saat bot mati, reconnect otomatis, log forensik, alert Gmail, dan SL SELALU
+    terpasang di server pada setiap order (SL server-side melindungi posisi saat bot/laptop mati).
+3.7 Posisi yang sedang terbuka saat bot dijalankan ulang harus dikenali dan dilanjutkan
+    pengelolaannya (trailing), bukan diabaikan.
+3.8 Alur script yang diinginkan pengguna:
+      jalankan -> welcome/alert (+ data terakhir) -> pilih Start/Keluar ->
+      cari signal (belum entry) -> entry buy/sell di harga saat ini -> proses (profit berjalan,
+      label SL aktif) -> hasil (harga awal -> harga akhir, untung/rugi, label SL) ->
+      ulangi cari signal; setelah 3 SL rugi tampil pesan STOP.
+    Dashboard memakai library rich. Tampilkan hitungan "SL rugi beruntun: n/3".
+3.9 Alert lewat Gmail (SMTP + App Password di .env). Kirim hanya kejadian penting:
+    bot mulai/berhenti, terkunci 3 SL rugi, override, error/terputus/reconnect, ringkasan
+    harian. Per transaksi cukup di dashboard dan trades.csv (opsional lewat flag).
+3.10 AI (9router, endpoint OpenAI-compatible di localhost:20128/v1, model "prioritas") hanya
+    meringkas berita ekonomi US hari ini (dari sumber kalender yang divalidasi). Jika AI/9router
+    gagal, bot tetap jalan normal. AI tidak boleh memengaruhi entry/exit.
+3.11 Target pengguna: win rate minimal 40%. CATATAN agent: dengan struktur payoff kita,
+    win rate impas sekitar 38-40%, jadi 40% ~ impas. Ukuran keberhasilan yang benar adalah
+    rata-rata R > 0, profit factor > 1, dan drawdown wajar setelah spread. Jangan mengejar win
+    rate dengan cara yang merusak payoff (mis. menggeser SL ke untung terlalu dini).
+3.12 Ide pengguna untuk riset (BUKAN fitur wajib, lihat Tahap 6): (1) analisis pola candlestick
+    ala ICT sebagai validasi tambahan; (2) mode agresif "lihat candle berjalan ~10 detik lalu
+    entry" -> hanya sebagai MODE BAYANGAN (merekam tanpa order) dulu.
+
+
+4. STATUS SAAT INI
+-------------------------------------------------------------------------------------
+SELESAI:
+- Tahap 1: koneksi MT5, dashboard rich, pemeriksaan siap-jalan, mode pantau (main.py).
+- Tahap 2: indikator, strategi, mesin backtest, penarik data, daftar uji, tes (20 tes lulus).
+- Data: data\raw\XAUUSD.vx_M1.csv (+ .json) = 399.999 candle M1, 2025-09-24 s/d 2026-11-11.
+        data\raw\BTCUSD.vx_M1.csv = 99.999 candle, 2026-08-31 s/d 2026-11-08.
+
+HASIL RISET (jujur, jangan diubah/dilebih-lebihkan):
+- BTCUSD.vx M1: rugi karena spread (~30 USD) memakan 50-70% dari 1R. Tanpa spread positif kecil.
+  BTC hanya untuk menguji mekanisme.
+- XAUUSD.vx: spread hanya ~3-13% dari R, biaya bukan masalah utama.
+- Aturan 3 SL rugi terbukti memperbaiki drawdown sekitar separuh (data 100 hari terakhir).
+- UJI BERSIH pada data lama yang belum pernah dilihat (2025-09-24 s/d 2026-07-28, 217 hari),
+  kriteria ditetapkan sebelum melihat hasil (>=100 transaksi, rata-rata R > 0, PF > 1, WR >= 40%):
+    Uji 1  ATR 3,  ADX 20, seharian : 1232 trx, WR 37,9%, rata-rata -0,000 R, PF 1,00, DD 54,7 R
+    Uji 2  ATR 4,  ADX 30, seharian :  398 trx, WR 39,7%, rata-rata +0,085 R, PF 1,14, DD 22,1 R
+           (1R rata-rata 12 USD di lot 0,01; gagal tipis di win rate; kandidat, BELUM terbukti)
+    Uji 3  ATR 4,  ADX 20, jam 09-18: 569 trx, WR 35,1%, rata-rata -0,114 R, PF 0,83
+  Kesimpulan: indikator klasik belum menunjukkan keunggulan yang terbukti. Hasil bagus di
+  data pendek (+0,135 R) menghilang di data panjang. Filter jam 09-18 tidak membantu.
+- Parameter bawaan di bot/strategy.py (ATR x1,5; ADX 20) TERBUKTI buruk. Untuk bot live,
+  pakai kandidat ATR x4, ADX 30 dengan peringatan jelas bahwa keunggulannya belum terbukti.
+
+ANTREAN RISET BERIKUTNYA (lakukan di Tahap 3-6):
+- Ambil riwayat lebih panjang:  backtest\fetch_data.py --bars 900000 . Jika tanggal awal
+  < 2025-09-24, uji kandidat (ATR 4, ADX 30) SATU KALI pada data sebelum 2025-09-24
+  (run_backtest.py --to 2025-09-24 ...) dengan kriteria yang sama. Laporkan apa adanya.
+
+
+5. PETA KODE YANG SUDAH ADA (jangan merusak antarmukanya; perluas dengan tes)
+-------------------------------------------------------------------------------------
+main.py                  titik masuk Tahap 1 (menu Start/Keluar, mode pantau). Akan diperluas.
+bot/config.py            load_config() -> Config (account, password, server, symbol, lot_size,
+                         max_spread, max_consecutive_loss, trailing_mode, mt5_path). ConfigError.
+bot/mt5_client.py        MT5Client: connect, shutdown, prepare_symbol, get_account, get_symbol,
+                         get_candles, run_checks. Dataclass AccountSummary, SymbolSummary, Check.
+                         TAHAP 1 hanya membaca data; belum ada fungsi order.
+bot/dashboard.py         tampilan rich (account_panel, checks_panel, market_panel, candles_panel,
+                         status_view, live_view, ask_menu).
+bot/indicators.py        ema, rsi (Wilder), true_range, atr (Wilder), adx (Wilder). Murni pandas.
+bot/strategy.py          StrategyParams, generate_signals(df, p): kolom signal (+1/-1/0) dan
+                         sl_distance (= ATR x atr_mult). Sinyal dihitung dari candle yang SUDAH
+                         TUTUP. Aturan: tren (EMA cepat/lambat + ADX >= batas) + pemicu RSI
+                         pullback (RSI menembus balik level 40/60).
+backtest/engine.py       BacktestConfig, run_backtest(df, cfg) -> BacktestResult. Meniru aturan
+                         bagian 3: entry di open candle berikutnya (buy di ask = bid + spread,
+                         sell di bid), SL dicek memakai sisi harga yang benar, asumsi konservatif
+                         (pergerakan merugikan dalam satu candle dianggap lebih dulu), gap menembus
+                         SL keluar di harga open, pengunci 3 SL rugi per hari (hari = waktu server),
+                         filter spread, filter jam.
+backtest/data.py         load_csv (format fetch_data atau Export Bars MT5), resample.
+backtest/report.py       summarize, print_report.
+backtest/run_backtest.py CLI: --csv --to --from --split --hours --timeframe --spread-scale --lot
+                         --max-spread --max-loss --first-trigger --atr-mult --adx-min dst.
+backtest/experiments.py  daftar uji yang ditetapkan di muka; hanya bagian awal data; --reveal.
+backtest/fetch_data.py   tarik data M1 dari MT5 (fallback jumlah candle saat "Invalid params").
+tests/                   test_indicators.py, test_engine.py (20 tes lulus).
+requirements.txt, requirements-dev.txt (pytest), .env.example, .gitignore.
+
+
+6. ATURAN KERJA AGENT
+-------------------------------------------------------------------------------------
+6.1 SIKLUS KERJA (ulangi untuk setiap unit kerja kecil)
+    Rencana singkat -> tulis kode kecil -> tulis/ubah tes -> jalankan tes -> jalankan programnya
+    (mode aman) -> baca output dan log -> perbaiki -> catat di PROGRESS.md -> lanjut.
+    Jangan menumpuk perubahan besar tanpa pengujian di tengahnya. Jika proyek memakai git,
+    commit kecil dengan pesan jelas (tanpa pernah menyertakan .env).
+
+6.2 SELALU CEK KEGAGALAN
+    - Setelah SETIAP perubahan: jalankan  ..\.venv\Scripts\python.exe -m pytest  dan baca hasilnya.
+      Tes gagal = tugas belum selesai. Jangan mematikan/menghapus tes demi lulus; perbaiki penyebabnya.
+    - Baca output perintah sampai habis. Jangan menganggap "tidak ada error" = berhasil; cek
+      angka dan hasil yang dihasilkan (mis. jumlah transaksi, file yang terbentuk, isi log).
+    - Saat ada error: (1) baca traceback penuh, (2) buat hipotesis akar masalah, (3) buktikan
+      dengan eksperimen kecil, (4) perbaiki di akar, (5) uji ulang, (6) tambahkan tes regresi.
+    - Jika gagal 3 kali dengan pendekatan berbeda untuk masalah yang sama: berhenti memaksa,
+      tulis BLOCKERS.md (gejala, yang sudah dicoba, dugaan, saran), lanjutkan pekerjaan lain yang
+      tidak bergantung padanya, dan laporkan ke pengguna.
+    - Verifikasi paritas: logika live HARUS identik dengan logika backtest. Bagikan fungsi yang
+      sama (trailing, pengunci, sinyal) dan buat tes paritas.
+    - Uji jalur kegagalan juga, bukan hanya jalur sukses: MT5 putus, order ditolak, spread
+      lebar, pasar tutup, file state rusak, Gmail gagal, 9router mati, data kosong.
+
+6.3 KEPUTUSAN TERBAIK
+    - Saat ragu: pilih opsi yang paling aman, paling mudah diuji, dan paling sesuai bagian 3.
+    - Catat tiap keputusan non-trivial di DECISIONS.md: tanggal, masalah, opsi yang
+      dipertimbangkan, pilihan, alasan, dampak. Keputusan yang bisa mengubah perilaku trading
+      harus bisa diubah lewat konfigurasi, bukan di-hardcode.
+    - Jangan mengubah keputusan pengguna (bagian 3) tanpa persetujuan; usulkan alternatif
+      beserta data pendukung.
+    - Utamakan kesederhanaan dan keterbacaan. Hindari library baru jika yang ada cukup. Setiap
+      library baru harus dicatat di requirements.txt dan dijustifikasi.
+
+6.4 KONVENSI KODE
+    - Komentar, docstring, dan pesan untuk pengguna dalam Bahasa Indonesia; nama variabel dan
+      fungsi dalam Bahasa Inggris (mengikuti kode yang ada).
+    - Type hints, fungsi kecil, tanpa efek samping pada modul logika murni. Modul logika murni
+      tidak meng-import MetaTrader5, rich, atau jaringan.
+    - Hanya satu modul yang boleh menyentuh MetaTrader5 untuk eksekusi: bot/mt5_client.py
+      (dan skrip bantu yang jelas). Sediakan tiruan MT5 (fake) di tests/ untuk menguji eksekusi.
+    - Jangan mengubah perilaku yang sudah diuji tanpa memperbarui tes dan mencatat alasannya.
+    - Setiap pesan error ke pengguna harus spesifik dan memberi langkah perbaikan.
+    - Hari perdagangan untuk pengunci: jam 00.00 WIB (zoneinfo "Asia/Jakarta"; paket tzdata
+      sudah tersedia lewat pandas). Backtest memakai hari waktu server; jelaskan perbedaannya.
+
+6.5 KAPAN BOLEH BERTANYA KE PENGGUNA (selain itu putuskan sendiri)
+    - Butuh tindakan fisik/akun yang tidak bisa dilakukan agent: mengisi kredensial di .env,
+      membuat App Password Gmail, mengaktifkan Algo Trading di MT5, membuka MT5/chart tertentu.
+    - Akan mengubah keputusan di bagian 3, atau melakukan hal yang tidak bisa dibatalkan.
+    - Butuh akses/izin ke layanan eksternal berbayar atau tunduk pada syarat penggunaan.
+    - Ada konflik antar-aturan di brief ini yang tidak bisa diselesaikan dengan prinsip bagian 0.
+
+6.6 LAPORAN
+    - Perbarui PROGRESS.md di akhir setiap tahap/unit besar (format bagian 13).
+    - Di akhir setiap sesi kerja ringkas: yang selesai, bukti (hasil tes/perintah), yang gagal,
+      keputusan yang dibuat, langkah berikutnya, dan hal yang butuh tindakan pengguna.
+
+
+7. ATURAN KEAMANAN (TIDAK BOLEH DILANGGAR)
+-------------------------------------------------------------------------------------
+7.1 JANGAN PERNAH mengirim order ke akun REAL. Bot wajib memeriksa jenis akun
+    (account_info().trade_mode). Jika bukan DEMO, tolak trading kecuali ALLOW_REAL=true di .env
+    DAN pengguna mengonfirmasi lewat prompt interaktif. Agent tidak boleh mengatur ALLOW_REAL.
+7.2 Uji order hanya di akun demo, lot minimum (0.01), jumlah kecil, dan lewat skrip khusus
+    (mis. tools/smoke_order_test.py) yang menolak berjalan jika akun bukan demo dan butuh flag
+    eksplisit --yes-demo. Tutup semua posisi uji setelahnya dan catat hasilnya.
+7.3 Jangan menulis, mencetak, atau mencatat di log: password, App Password, API key, nomor akun
+    penuh (samarkan sebagian). Jangan commit .env. Jangan menaruh rahasia di kode.
+7.4 Setiap order wajib membawa SL. Tidak ada order tanpa SL. Beri magic number tetap dan comment
+    khusus agar posisi bot bisa dibedakan dari posisi manual.
+7.5 Jangan menonaktifkan fitur keamanan Windows/antivirus, jangan menjalankan sebagai Administrator,
+    jangan mengunduh DLL/EXE dari sumber tak jelas. Pasang paket hanya dari PyPI sesuai
+    requirements.
+7.6 Layanan 9router milik pengguna: JANGAN mengaktifkan tunnel atau membuka dashboard-nya ke
+    luar; gunakan hanya alamat lokal. Ingatkan pengguna mengganti password dashboard bawaan.
+7.7 Semua keputusan trading bersifat deterministik dan dapat diaudit lewat log. AI/LLM tidak
+    boleh berada di jalur keputusan trading.
+
+
+8. ATURAN KEJUJURAN ILMIAH (BACKTEST DAN RISET)
+-------------------------------------------------------------------------------------
+8.1 Tetapkan daftar uji dan kriteria lulus SEBELUM melihat hasil. Catat di docs/ (pra-registrasi).
+8.2 Pisahkan data: pemilihan parameter hanya di bagian awal/pengembangan; ujian di data yang
+    belum pernah dilihat; data uji hanya dibuka SEKALI per kandidat. Data yang sudah dilihat
+    tidak lagi bersih.
+8.3 Waspadai uji berganda: makin banyak kombinasi, makin besar peluang "menang kebetulan".
+    Pilih wilayah parameter yang stabil, bukan satu angka tertinggi. Jangan grid search besar
+    pada data pendek.
+8.4 Selalu laporkan: jumlah transaksi, win rate, rata-rata R, profit factor, drawdown (R dan USD),
+    rugi beruntun terpanjang, rata-rata 1R dalam USD, porsi spread terhadap R, periode data,
+    dan perkiraan ketidakpastian (kesalahan baku). Selisih kecil (< sekitar 1-2 kesalahan baku)
+    dianggap tidak bermakna.
+8.5 Pertahankan asumsi konservatif backtest (spread nyata dari data, entry di candle berikutnya,
+    pergerakan merugikan lebih dulu, gap menembus SL). Jangan melonggarkannya demi hasil bagus.
+8.6 Simpan SEMUA hasil, termasuk yang jelek, di docs/results/. Jangan menghapus hasil negatif.
+8.7 Forward test (akun demo) adalah ujian bersih. Siapkan skrip analisis forward-test yang
+    membandingkan hasil live-demo dengan backtest (frekuensi sinyal, slippage, spread, hasil).
+    Jelaskan bahwa ~2 transaksi/hari berarti sebulan hanya ~50 transaksi: cukup untuk
+    membuktikan MEKANISME dan biaya nyata, tidak cukup untuk membuktikan keunggulan kecil.
+8.8 Jika bukti tidak mendukung keunggulan strategi, katakan itu terang-terangan di laporan akhir
+    dan fokuskan klaim proyek pada kerangka uji yang disiplin, manajemen risiko, dan keandalan.
+
+
+9. PERANGKAP TEKNIS MT5 DAN WINDOWS (PENGALAMAN NYATA DI PROYEK INI)
+-------------------------------------------------------------------------------------
+- copy_rates_from_pos dengan jumlah besar bisa gagal "(-2, Invalid params)": gunakan fallback
+  jumlah lebih kecil (sudah ada di fetch_data.py). Set "Max bars in chart" ke Unlimited di MT5.
+- Candle terakhir dari MT5 masih berjalan: buang/abaikan untuk sinyal (pakai candle tutup).
+- Harga candle MT5 adalah BID. Ask = bid + spread. Buy masuk di ask, SL buy diuji pada bid.
+  Sell masuk di bid, SL sell diuji pada ask.
+- Spread di data adalah dalam POIN (bukan dolar): dolar = poin x point (0.01 untuk emas).
+- Nama server berbeda antara tampilan portal broker dan MT5; pakai persis yang di MT5.
+- Pesan "pasar ditutup"/tick kosong saat simbol baru diaktifkan: tunggu tick pertama sebelum
+  menyimpulkan.
+- Sebelum order: cek terminal_info().trade_allowed (Algo Trading aktif), account_info().trade_allowed,
+  symbol_info().trade_mode, jarak SL >= trade_stops_level (dan freeze level), lot sesuai
+  volume_min/step/max, mode pengisian (filling mode) yang didukung simbol, harga dinormalisasi
+  ke digits. Gunakan konstanta mt5.TRADE_RETCODE_* (jangan hardcode angka) untuk menangani
+  hasil: DONE, REQUOTE, REJECT, INVALID_STOPS, INVALID_FILL, MARKET_CLOSED, NO_MONEY,
+  TRADE_DISABLED, CLIENT_DISABLES_AT, dst. Tangani tiap kasus dengan keputusan eksplisit
+  (coba ulang terbatas, lewati, alert, atau berhenti).
+- Mengubah SL posisi: TRADE_ACTION_SLTP dengan position ticket. Mengenali hasil posisi tertutup:
+  history_deals_get berdasarkan position id (cek deal keluar, harga, profit, komisi, swap).
+- Akun HEDGING: banyak posisi per simbol diizinkan oleh broker, tetapi bot kita tetap 1 posisi.
+  Identifikasi posisi bot lewat magic number.
+- Waktu: MT5 memberi waktu server (bukan UTC). Konversi eksplisit dan uji.
+- Python 3.14 + pandas 3.x: hindari praktik chained assignment dan API yang usang.
+- Smart App Control memblokir DLL pandas sebelumnya (sudah dimatikan pengguna). Jika kembali
+  muncul "Application Control policy has blocked this file", jelaskan opsi ke pengguna
+  (pindah ke Python 3.11, atau ekspor CSV manual), jangan memaksa.
+- Unduhan file dari chat kadang gagal di sisi pengguna; selalu simpan hasil kerja langsung di
+  repositori lokal, bukan sebagai lampiran.
+
+
+10. RENCANA TAHAP (KERJAKAN BERURUTAN; TIAP TAHAP PUNYA KRITERIA SELESAI)
+-------------------------------------------------------------------------------------
+
+TAHAP 3 - FONDASI KEANDALAN (state, risiko, trailing, log)
+  Tugas:
+  a. bot/trailing.py: fungsi murni untuk level SL bertingkat (n = floor(profit_R - lock_gap)),
+     hitung SL baru, tidak pernah mundur. Refaktor backtest/engine.py agar memakai fungsi yang SAMA.
+  b. bot/risk.py: kelas pengunci (LossLock) murni: hitung SL(rugi) berturut-turut, kunci sampai
+     pergantian hari WIB, override dengan reset, filter spread, filter jam (opsional, default mati),
+     opsi batas rugi harian/drawdown (default mati). Dipakai bersama oleh engine dan bot live.
+  c. bot/state.py: simpan/baca data\state.json secara atomik (tulis file sementara lalu ganti),
+     tahan terhadap file rusak (cadangkan, mulai bersih, beri alert). Isi: hitungan SL rugi,
+     hari terkunci, override, posisi terbuka (ticket, side, entry, sl_awal, r, level), transaksi
+     terakhir, waktu aktif terakhir.
+  d. bot/logger.py: logging dengan RotatingFileHandler ke logs\bot.log (format terstruktur,
+     tanpa rahasia), plus logs\trades.csv (satu baris per transaksi: waktu masuk/keluar, arah,
+     harga masuk/keluar, label SL, level, R, USD, spread, slippage).
+  e. Konfigurasi strategi lewat .env/config (ATR_MULT, ADX_MIN, EMA, RSI, dst), default =
+     kandidat (ATR 4, ADX 30) dengan peringatan "belum terbukti". Validasi di config.py.
+  f. Tes: trailing (termasuk tidak pernah mundur), LossLock (3 rugi, reset oleh untung, pergantian
+     hari, override), state (atomik, rusak), paritas engine-vs-modul bersama.
+  Selesai jika: semua tes baru lulus; engine memakai modul bersama dan hasil backtest lama
+  tidak berubah (bandingkan angka sebelum/sesudah pada data yang sama); log dan state
+  terbentuk saat program dijalankan.
+
+TAHAP 4 - EKSEKUSI LIVE DI AKUN DEMO
+  Tugas:
+  a. bot/mt5_client.py: tambah fungsi order (kirim order pasar dengan SL, ubah SL, tutup posisi
+     darurat, baca posisi terbuka berdasarkan magic, baca riwayat deal), validasi pra-order
+     (bagian 9), penanganan retcode, normalisasi harga/lot.
+  b. bot/engine_live.py (atau serupa): loop utama sesuai alur 3.8:
+       - deteksi candle M1 baru tutup -> hitung sinyal dari candle tutup -> filter (spread,
+         terkunci, jam, satu posisi) -> entry buy/sell di harga saat ini dengan SL(rugi) = 1R
+         (R dari ATR x mult saat sinyal) -> pantau posisi tiap 1-2 detik -> geser SL sesuai
+         trailing -> deteksi posisi tertutup -> catat hasil (harga awal -> akhir, untung/rugi,
+         label) -> perbarui hitungan/pengunci -> ulangi.
+       - Saat start: rekonsiliasi posisi terbuka (adopsi posisi dengan magic bot, hitung level
+         trailing dari SL yang ada), baca state.json, tampilkan data terakhir, tampilkan
+         alert dan menu bila terkunci (3.5).
+  c. Mode operasi di .env: MODE=signal_only (tampilkan sinyal, tanpa order; DEFAULT),
+     MODE=demo_orders (kirim order, hanya akun demo). Pengguna yang mengganti mode, bukan agent.
+  d. Ketahanan: reconnect dengan exponential backoff + alert, penanganan MT5 terputus di tengah
+     posisi (jangan membuka posisi baru sampai rekonsiliasi selesai), penutupan rapi (Ctrl+C),
+     tangkap semua exception di loop utama (log + alert, jangan crash diam-diam), watchdog
+     detak jantung di log.
+  e. Dashboard: status bot, harga, spread, indikator, alasan belum ada sinyal, posisi berjalan
+     (profit USD dan R, label SL aktif), hitungan "SL rugi beruntun n/3", hasil terakhir, status
+     kunci. Layar welcome menampilkan jenis akun (DEMO/REAL) mencolok.
+  f. tools/smoke_order_test.py: uji end-to-end terkontrol di demo (buka 0.01 lot dengan SL,
+     geser SL, tutup, verifikasi riwayat), butuh --yes-demo, menolak akun non-demo.
+  g. Tes: fake MT5 (tiruan) untuk seluruh jalur order, retcode, reconnect, rekonsiliasi,
+     pengelolaan trailing live berbanding data skenario; tes bahwa mode REAL ditolak.
+  Selesai jika: semua tes lulus; smoke test demo berhasil (bukti log + riwayat MT5); bot
+  signal_only berjalan stabil >= beberapa jam tanpa error di log; simulasi pemutusan koneksi
+  pulih otomatis; bot dimatikan dan dinyalakan di tengah posisi demo melanjutkan trailing.
+
+TAHAP 5 - ALERT DAN INFORMASI BERITA
+  Tugas:
+  a. bot/notifier.py: Gmail SMTP (SSL 465 atau STARTTLS 587) memakai App Password dari .env,
+     antrean + pembatasan (jangan banjir email), template pesan Indonesia, gagal kirim tidak boleh
+     menghentikan bot (log saja). Event: lihat 3.9.
+  b. bot/news.py: ambil kalender ekonomi hari ini dari sumber yang DIVALIDASI (kandidat:
+     SiftingIO punya endpoint kalender ekonomi; verifikasi ketersediaan API, kuota, syarat
+     penggunaan, dan pemetaan zona waktu SEBELUM memakai; sediakan antarmuka sumber yang bisa
+     diganti). Fungsi aturan sederhana TANPA AI: jendela blackout (default 30 menit sebelum/
+     sesudah berita US berdampak tinggi, bisa diatur) yang memblokir ENTRY BARU (posisi berjalan
+     tetap dikelola). Default blackout: DIUSULKAN aktif; catat di DECISIONS.md dan jadikan opsi.
+  c. Ringkasan AI: kirim daftar berita ke 9router (POST /v1/chat/completions, Bearer key dari .env,
+     model dari AI_MODEL, timeout pendek), minta keluaran JSON ketat; validasi skema; jika gagal
+     atau tidak valid -> tampilkan "ringkasan tidak tersedia". Tampilkan di dashboard dan
+     sertakan di email ringkasan harian. Tidak memengaruhi keputusan.
+  d. Tes dengan HTTP palsu: sukses, timeout, JSON rusak, 9router mati, Gmail gagal.
+  Selesai jika: tes lulus; email uji terkirim ke ALERT_TO (dengan bantuan pengguna untuk
+  kredensial); blackout terbukti memblokir entry di tes; bot normal saat AI/Gmail mati.
+
+TAHAP 6 - RISET SINYAL (DISIPLIN ILMIAH, bagian 8)
+  Tugas:
+  a. Selesaikan antrean riset di bagian 4 (riwayat lebih panjang, uji kandidat sekali).
+  b. Analisis diagnosis dari trades.csv: per jam, per hari, per arah, per rezim volatilitas.
+     Hasilnya HANYA untuk membentuk hipotesis, bukan memilih parameter pada data yang sama.
+  c. bot/patterns.py: modul pola, SATU konsep per percobaan, aturan ditulis di docs/ SEBELUM uji:
+     kandidat: struktur pasar (swing, BOS/CHoCH), liquidity sweep, fair value gap, order block,
+     premium/discount, killzone; serta engulfing/pin bar/inside bar. Sertakan SL berbasis struktur
+     (di balik sumbu) bila menurunkan porsi spread terhadap R. Uji dengan protokol bagian 8:
+     kembangkan di data pengembangan, uji sekali di data bersih, bandingkan dengan baseline.
+     Katakan jujur bahwa aturan kode hanyalah SATU tafsir dari konsep ICT yang subjektif.
+  d. Filter arah dari timeframe lebih besar (mis. EMA di M15) sebagai satu percobaan terpisah.
+  e. MODE BAYANGAN untuk ide 10 detik: modul yang hanya merekam tick, arah di detik ke-10
+     candle, arah penutupan candle, dan gerak sesudahnya minus spread, ke file CSV. Tidak ada
+     order. Setelah data cukup, buat laporan hit-rate dan ekspektasi bersih. Mode agresif
+     hanya boleh dibuat jika datanya mendukung, nonaktif secara default, hanya demo.
+  f. Walk-forward hanya setelah data cukup panjang; hindari optimasi otomatis besar.
+  Selesai jika: tiap hipotesis punya dokumen pra-registrasi, hasil uji bersih, dan kesimpulan
+  jujur (didukung/tidak) di docs/results/.
+
+TAHAP 7 - PAKET FINAL LOMBA
+  Tugas:
+  a. README.md (Indonesia): latar, tujuan, fitur, arsitektur, instalasi Windows, konfigurasi .env,
+     cara menjalankan (signal_only, demo_orders, backtest), struktur folder, batasan dan risiko,
+     disclaimer bukan nasihat investasi.
+  b. docs/: diagram arsitektur dan flowchart (Mermaid, selaras dengan alur 3.8), penjelasan
+     aturan SL bertingkat dan pengunci, metodologi pengujian (bagian 8), semua hasil.
+  c. Laporan akhir (docs/LAPORAN.md): masalah, pendekatan, inovasi (konfirmasi berlapis, SL
+     bertingkat tanpa TP, pengunci 3 rugi, state tahan-mati, alert, ringkasan berita AI informatif),
+     hasil jujur (termasuk hasil negatif dan keterbatasan), pembelajaran, rencana lanjutan.
+  d. Kualitas: cakupan tes yang bermakna, tes jalan di CI (GitHub Actions, Ubuntu, dengan MT5
+     tiruan; tanpa MetaTrader5 asli), lint ringan, requirements terkunci seperlunya,
+     CHANGELOG.md, DECISIONS.md, PROGRESS.md rapi.
+  e. Skrip demo (docs/DEMO.md): langkah demonstrasi 5-7 menit (welcome, pemeriksaan, sinyal,
+     entry demo, trailing, pengunci, alert, backtest, hasil jujur).
+  f. Audit keamanan: tidak ada rahasia di repo/riwayat/log, .env.example lengkap, .gitignore benar,
+     penjagaan akun REAL teruji.
+  Selesai jika: bagian 12 terpenuhi seluruhnya.
+
+
+11. KEPUTUSAN YANG MENUNGGU PENGGUNA (PAKAI DEFAULT AMAN SAMBIL MENUNGGU)
+-------------------------------------------------------------------------------------
+- Reset hitungan saat override: DEFAULT = reset ke 0 (jatah 3 lagi).
+- Jam bot berjalan (WIB): DEFAULT = tanpa filter jam (data menunjukkan filter 09-18 tidak
+  membantu); tetap sediakan opsi HOURS di .env.
+- MAX_SPREAD: DEFAULT = ukur median spread lewat mode pantau, lalu set sekitar 2x median
+  (perkiraan awal 60 poin untuk emas); sampai terukur, pakai 60.
+- Blackout berita: DEFAULT aktif 30 menit sebelum/sesudah berita US berdampak tinggi,
+  dapat dimatikan.
+- Saluran alert: Gmail (sudah diputuskan). Telegram boleh ditambah kemudian sebagai opsi.
+- Modal akun cent/real dan batas pengumpulan lomba: belum diketahui. Jika batas lomba pendek,
+  prioritaskan: Tahap 3, Tahap 4, lalu paket final (Tahap 7) dan laporan hasil jujur; Tahap 5-6
+  sebagai tambahan.
+- Konsep ICT yang dipakai pengguna, serta periode MA/RSI pilihan pengguna: belum disebut. Tanyakan
+  singkat saat memasuki Tahap 6, lalu putuskan sendiri jika tidak dijawab.
+
+
+12. DEFINISI SELESAI (FINAL)
+-------------------------------------------------------------------------------------
+Proyek dinyatakan selesai hanya jika SEMUA berikut benar dan dibuktikan:
+[ ] Semua tes lulus (dijalankan ulang di akhir) dan jalan di CI tanpa MetaTrader5.
+[ ] Bot signal_only berjalan stabil; bot demo_orders melewati smoke test dan satu sesi demo nyata
+    dengan log lengkap; logika live identik dengan backtest (tes paritas lulus).
+[ ] Semua keputusan pengguna bagian 3 terimplementasi dan teruji (SL bertingkat, 1 posisi,
+    pengunci 3 SL rugi + lanjut besok + menu saat dijalankan ulang, state tahan-mati, alert Gmail,
+    dashboard rich, AI hanya informasi).
+[ ] Penjagaan keamanan bagian 7 teruji (akun REAL ditolak, tanpa rahasia di log/repo).
+[ ] Hasil riset lengkap dan jujur di docs/results/, termasuk keterbatasan; tidak ada klaim profit
+    yang tidak didukung data.
+[ ] README, dokumentasi, laporan akhir, skrip demo, CHANGELOG, DECISIONS, PROGRESS lengkap.
+[ ] BLOCKERS.md kosong atau berisi hanya hal yang butuh tindakan pengguna, dengan penjelasan.
+
+
+13. FORMAT PROGRESS.md (CATATAN SETIAP UNIT KERJA)
+-------------------------------------------------------------------------------------
+Tanggal | Tahap/unit | Yang dikerjakan | Bukti (perintah + hasil ringkas, mis. "pytest: 34 passed")
+        | Masalah/kegagalan dan perbaikannya | Keputusan (rujuk DECISIONS.md) | Langkah berikutnya
+        | Butuh tindakan pengguna (jika ada)
+
+PERINTAH BAKU
+  Tes semua            : ..\.venv\Scripts\python.exe -m pytest
+  Mode pantau (Tahap 1): ..\.venv\Scripts\python.exe main.py
+  Ambil data           : ..\.venv\Scripts\python.exe backtest\fetch_data.py --bars 900000
+  Backtest             : ..\.venv\Scripts\python.exe backtest\run_backtest.py --csv data\raw\XAUUSD.vx_M1.csv --split 0.7
+  Uji bersih (contoh)  : ..\.venv\Scripts\python.exe backtest\run_backtest.py --csv data\raw\XAUUSD.vx_M1.csv --to 2026-07-29 --atr-mult 4 --adx-min 30
+  Daftar uji           : ..\.venv\Scripts\python.exe backtest\experiments.py --csv data\raw\XAUUSD.vx_M1.csv
+
+=====================================================================================
+AKHIR BRIEF. Mulai dari Tahap 3. Buat PROGRESS.md, DECISIONS.md, BLOCKERS.md di akar proyek
+jika belum ada, lalu bekerja sesuai siklus bagian 6.1. Selalu cek kegagalan; selalu jujur.
+=====================================================================================

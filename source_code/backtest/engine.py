@@ -18,14 +18,13 @@ dengan SL lama sebelum trailing diperbarui oleh candle yang sama.
 Data candle MT5 adalah harga BID. Harga ask = bid + spread.
 Hari dihitung memakai waktu server broker.
 """
-import math
 from dataclasses import dataclass
 from typing import Optional
 
 import numpy as np
 import pandas as pd
 
-from bot.risk import LossLock
+from bot.risk import LossLock, in_trading_hours
 from bot.trailing import calculate_trailing_stop
 
 
@@ -50,15 +49,6 @@ class BacktestResult:
     skipped_locked: int
     locked_days: int
     skipped_hours: int = 0
-
-
-def in_trading_hours(hour: int, start: Optional[int], end: Optional[int]) -> bool:
-    """True kalau jam server berada di jendela [start, end). Jendela boleh melewati tengah malam."""
-    if start is None or end is None:
-        return True
-    if start <= end:
-        return start <= hour < end
-    return hour >= start or hour < end
 
 
 REQUIRED_COLUMNS = ["time", "open", "high", "low", "close", "spread", "signal", "sl_distance"]

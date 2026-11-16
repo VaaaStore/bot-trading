@@ -188,3 +188,26 @@ def test_resample_m5_ohlc():
     assert out.loc[0, "open"] == 100 and out.loc[0, "close"] == 104.5
     assert out.loc[0, "high"] == 105 and out.loc[0, "low"] == 99
     assert out.loc[0, "tick_volume"] == 50
+
+
+# ─────────────────────────────────────────────
+# Tes paritas: in_trading_hours dari bot.risk dan backtest.engine harus identik
+# (backtest.engine sekarang mengimport dari bot.risk, bukan mendefinisikan ulang)
+# ─────────────────────────────────────────────
+from bot.risk import in_trading_hours as risk_ith  # noqa: E402
+from backtest.engine import in_trading_hours as engine_ith  # noqa: E402
+
+
+def test_in_trading_hours_parity():
+    """in_trading_hours dari bot.risk dan backtest.engine harus objek yang sama."""
+    assert risk_ith is engine_ith, (
+        "in_trading_hours di backtest.engine bukan re-export dari bot.risk. "
+        "Pastikan engine.py hanya mengimport, bukan mendefinisikan ulang."
+    )
+
+
+def test_in_trading_hours_parity_values():
+    """Verifikasi hasil identik untuk beberapa nilai representatif."""
+    cases = [(10, 9, 18), (18, 9, 18), (3, 9, 18), (23, 22, 6), (12, 22, 6), (5, None, None)]
+    for h, s, e in cases:
+        assert risk_ith(h, s, e) == engine_ith(h, s, e), f"Berbeda untuk ({h}, {s}, {e})"
