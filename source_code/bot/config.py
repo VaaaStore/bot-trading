@@ -38,6 +38,7 @@ class Config:
     max_drawdown_percent: Optional[float]
     mode: str = "signal_only"          # signal_only | demo_orders
     allow_real: bool = False           # izin eksplisit akun REAL (default mati)
+    max_slippage_points: int = 30      # deviasi maksimum saat kirim order
 
 
 def _get(name: str) -> Optional[str]:
@@ -186,6 +187,17 @@ def load_config() -> Config:
         except ValueError:
             problems.append("MAX_DRAWDOWN_PERCENT harus berupa angka")
 
+    # --- slippage ---
+    max_slippage_points = 30
+    slippage_raw = _get("MAX_SLIPPAGE_POINTS")
+    if slippage_raw:
+        try:
+            max_slippage_points = int(slippage_raw)
+            if max_slippage_points < 0:
+                problems.append("MAX_SLIPPAGE_POINTS harus >= 0")
+        except ValueError:
+            problems.append("MAX_SLIPPAGE_POINTS harus berupa bilangan bulat")
+
     # --- mode & keamanan ---
     valid_modes = ("signal_only", "demo_orders")
     mode = (_get("MODE") or "signal_only").lower()
@@ -217,4 +229,5 @@ def load_config() -> Config:
         max_drawdown_percent=max_drawdown_percent,
         mode=mode,
         allow_real=allow_real,
+        max_slippage_points=max_slippage_points,
     )
